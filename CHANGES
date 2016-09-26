@@ -1,5 +1,11 @@
 Apache Thrift Changelog
 
+Thrift 1.0.0
+--------------------------------------------------------------------------------
+## Bug
+    * [THRIFT-3839] - Fix serialization problem with large data
+    * [PATCH] - Fix persistence problem on TSocket timeouts
+
 Thrift 0.9.3
 --------------------------------------------------------------------------------
 ## Bug

@@ -1,7 +1,17 @@
 Apache Thrift
 =============
 
-Last Modified: 2014-03-16
+Last Modified: 2015-09-26
+
+REMINDER
+========
+
+If Thrift releases a newer version and you want to update this Fork 
+or completely switch to the newer Thrift version you have to mention
+two thinks.
+
+Check that the PHP Thrift Protocol implements the new larger BufferSize.
+Also make sure that the seqid_ got checked when response is read. 
 
 License
 =======
