@@ -35,9 +35,14 @@
 #include <fcntl.h>
 #endif
 
+#define OPENSSL_VERSION_NO_THREAD_ID_BEFORE    0x10000000L
+#define OPENSSL_ENGINE_CLEANUP_REQUIRED_BEFORE 0x10100000L
 
-#include <boost/lexical_cast.hpp>
 #include <boost/shared_array.hpp>
+#include <openssl/opensslv.h>
+#if (OPENSSL_VERSION_NUMBER < OPENSSL_ENGINE_CLEANUP_REQUIRED_BEFORE)
+#include <openssl/engine.h>
+#endif
 #include <openssl/err.h>
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
@@ -45,8 +50,7 @@
 #include <thrift/concurrency/Mutex.h>
 #include <thrift/transport/TSSLSocket.h>
 #include <thrift/transport/PlatformSocket.h>
-
-#define OPENSSL_VERSION_NO_THREAD_ID 0x10000000L
+#include <thrift/TToString.h>
 
 using namespace std;
 using namespace apache::thrift::concurrency;
@@ -66,13 +70,16 @@ static boost::shared_array<Mutex> mutexes;
 
 static void callbackLocking(int mode, int n, const char*, int) {
   if (mode & CRYPTO_LOCK) {
+    // assertion of (px != 0) here typically means that a TSSLSocket's lifetime
+    // exceeded the lifetime of the TSSLSocketFactory that created it, and the
+    // TSSLSocketFactory already ran cleanupOpenSSL(), which deleted "mutexes".
     mutexes[n].lock();
   } else {
     mutexes[n].unlock();
   }
 }
 
-#if (OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_NO_THREAD_ID)
+#if (OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_NO_THREAD_ID_BEFORE)
 static unsigned long callbackThreadID() {
 #ifdef _WIN32
   return (unsigned long)GetCurrentThreadId();
@@ -107,17 +114,22 @@ void initializeOpenSSL() {
   openSSLInitialized = true;
   SSL_library_init();
   SSL_load_error_strings();
+  ERR_load_crypto_strings();
+
   // static locking
+  // newer versions of OpenSSL changed CRYPTO_num_locks - see THRIFT-3878
+#ifdef CRYPTO_num_locks
+  mutexes = boost::shared_array<Mutex>(new Mutex[CRYPTO_num_locks()]);
+#else
   mutexes = boost::shared_array<Mutex>(new Mutex[ ::CRYPTO_num_locks()]);
-  if (mutexes == NULL) {
-    throw TTransportException(TTransportException::INTERNAL_ERROR,
-                              "initializeOpenSSL() failed, "
-                              "out of memory while creating mutex array");
-  }
-#if (OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_NO_THREAD_ID)
+#endif
+
+#if (OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_NO_THREAD_ID_BEFORE)
   CRYPTO_set_id_callback(callbackThreadID);
 #endif
+
   CRYPTO_set_locking_callback(callbackLocking);
+
   // dynamic locking
   CRYPTO_set_dynlock_create_callback(dyn_create);
   CRYPTO_set_dynlock_lock_callback(dyn_lock);
@@ -129,17 +141,18 @@ void cleanupOpenSSL() {
     return;
   }
   openSSLInitialized = false;
-#if (OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_NO_THREAD_ID)
-  CRYPTO_set_id_callback(NULL);
+
+  // https://wiki.openssl.org/index.php/Library_Initialization#Cleanup
+  // we purposefully do NOT call FIPS_mode_set(0) and leave it up to the enclosing application to manage FIPS entirely
+#if (OPENSSL_VERSION_NUMBER < OPENSSL_ENGINE_CLEANUP_REQUIRED_BEFORE)
+  ENGINE_cleanup();             // https://www.openssl.org/docs/man1.1.0/crypto/ENGINE_cleanup.html - cleanup call is needed before 1.1.0
 #endif
-  CRYPTO_set_locking_callback(NULL);
-  CRYPTO_set_dynlock_create_callback(NULL);
-  CRYPTO_set_dynlock_lock_callback(NULL);
-  CRYPTO_set_dynlock_destroy_callback(NULL);
-  ERR_free_strings();
+  CONF_modules_unload(1);
   EVP_cleanup();
   CRYPTO_cleanup_all_ex_data();
   ERR_remove_state(0);
+  ERR_free_strings();
+
   mutexes.reset();
 }
 
@@ -288,33 +301,41 @@ void TSSLSocket::open() {
 
 void TSSLSocket::close() {
   if (ssl_ != NULL) {
-    int rc;
+    try {
+      int rc;
 
-    do {
-      rc = SSL_shutdown(ssl_);
-      if (rc <= 0) {
-        int errno_copy = THRIFT_GET_SOCKET_ERROR;
-        int error = SSL_get_error(ssl_, rc);
-        switch (error) {
-          case SSL_ERROR_SYSCALL:
-            if ((errno_copy != THRIFT_EINTR)
-                && (errno_copy != THRIFT_EAGAIN)) {
-              break;
-            }
-          case SSL_ERROR_WANT_READ:
-          case SSL_ERROR_WANT_WRITE:
-            waitForEvent(error == SSL_ERROR_WANT_READ);
-                rc = 2;
-          default:;// do nothing
+      do {
+        rc = SSL_shutdown(ssl_);
+        if (rc <= 0) {
+          int errno_copy = THRIFT_GET_SOCKET_ERROR;
+          int error = SSL_get_error(ssl_, rc);
+          switch (error) {
+            case SSL_ERROR_SYSCALL:
+              if ((errno_copy != THRIFT_EINTR)
+                  && (errno_copy != THRIFT_EAGAIN)) {
+                break;
+              }
+            case SSL_ERROR_WANT_READ:
+            case SSL_ERROR_WANT_WRITE:
+              waitForEvent(error == SSL_ERROR_WANT_READ);
+              rc = 2;
+            default:;// do nothing
+          }
         }
-      }
-    } while (rc == 2);
+      } while (rc == 2);
 
-    if (rc < 0) {
-      int errno_copy = THRIFT_GET_SOCKET_ERROR;
-      string errors;
-      buildErrors(errors, errno_copy);
-      GlobalOutput(("SSL_shutdown: " + errors).c_str());
+      if (rc < 0) {
+        int errno_copy = THRIFT_GET_SOCKET_ERROR;
+        string errors;
+        buildErrors(errors, errno_copy);
+        GlobalOutput(("SSL_shutdown: " + errors).c_str());
+      }
+    } catch (TTransportException& te) {
+      // Don't emit an exception because this method is called by the
+      // destructor. There's also not much that a user can do to recover, so
+      // just clean up as much as possible without throwing, similar to the rc
+      // < 0 case above.
+      GlobalOutput.printf("SSL_shutdown: %s", te.what());
     }
     SSL_free(ssl_);
     ssl_ = NULL;
@@ -433,21 +454,6 @@ void TSSLSocket::checkHandshake() {
 
   ssl_ = ctx_->createSSL();
 
-  //set read and write bios to non-blocking
-  BIO* wbio =  BIO_new(BIO_s_mem());
-  if (wbio == NULL) {
-    throw TSSLException("SSL_get_wbio returns NULL");
-  }
-  BIO_set_nbio(wbio, 1);
-
-  BIO* rbio = BIO_new(BIO_s_mem());
-  if (rbio == NULL) {
-    throw TSSLException("SSL_get_rbio returns NULL");
-  }
-  BIO_set_nbio(rbio, 1);
-
-  SSL_set_bio(ssl_, rbio, wbio);
-
   SSL_set_fd(ssl_, static_cast<int>(socket_));
   int rc;
   if (server()) {
@@ -471,8 +477,11 @@ void TSSLSocket::checkHandshake() {
       }
     } while (rc == 2);
   } else {
-    // set the SNI hostname
-    SSL_set_tlsext_host_name(ssl_, getHost().c_str());
+    // OpenSSL < 0.9.8f does not have SSL_set_tlsext_host_name()
+    #if defined(SSL_set_tlsext_host_name)
+      // set the SNI hostname
+      SSL_set_tlsext_host_name(ssl_, getHost().c_str());
+    #endif
     do {
       rc = SSL_connect(ssl_);
       if (rc <= 0) {
@@ -628,7 +637,7 @@ unsigned int TSSLSocket::waitForEvent(bool wantRead) {
   }
 
   struct THRIFT_POLLFD fds[2];
-  std::memset(fds, 0, sizeof(fds));
+  memset(fds, 0, sizeof(fds));
   fds[0].fd = fdSocket;
   fds[0].events = wantRead ? THRIFT_POLLIN : THRIFT_POLLOUT;
 
@@ -637,7 +646,15 @@ unsigned int TSSLSocket::waitForEvent(bool wantRead) {
     fds[1].events = THRIFT_POLLIN;
   }
 
-  int ret = THRIFT_POLL(fds, interruptListener_ ? 2 : 1, -1);
+  int timeout = -1;
+  if (wantRead && recvTimeout_) {
+    timeout = recvTimeout_;
+  }
+  if (!wantRead && sendTimeout_) {
+    timeout = sendTimeout_;
+  }
+
+  int ret = THRIFT_POLL(fds, interruptListener_ ? 2 : 1, timeout);
 
   if (ret < 0) {
     // error cases
@@ -842,7 +859,7 @@ void buildErrors(string& errors, int errno_copy) {
     }
   }
   if (errors.empty()) {
-    errors = "error code: " + boost::lexical_cast<string>(errno_copy);
+    errors = "error code: " + to_string(errno_copy);
   }
 }
 

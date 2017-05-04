@@ -95,6 +95,6 @@ class TMemoryBuffer extends TTransport
 
   public function putBack($data)
   {
-    $this->buf_ = $data . $this->buf_;
+    $this->buf_ = $data.$this->buf_;
   }
 }

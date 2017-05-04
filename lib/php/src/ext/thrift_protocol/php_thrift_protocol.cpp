@@ -31,16 +31,16 @@
 
 #include <sys/types.h>
 #if defined( WIN32 ) || defined( _WIN64 )
-typedef int  int32_t; 
+typedef int  int32_t;
 typedef signed char int8_t;
 typedef unsigned char   uint8_t;
 typedef unsigned short  uint16_t;
 typedef long long  int64_t;
-typedef unsigned   uint32_t; 
-typedef short  int16_t; 
+typedef unsigned   uint32_t;
+typedef short  int16_t;
 typedef unsigned long long   uint64_t;
 #else
-#include <arpa/inet.h> 
+#include <arpa/inet.h>
 #endif
 #include <stdexcept>
 
@@ -543,7 +543,7 @@ void binary_deserialize(int8_t thrift_typeID, PHPInputTransport& transport, zval
         }
         else {
           if (Z_TYPE_P(key) != IS_STRING) convert_to_string(key);
-          zend_hash_update(return_value->value.ht, Z_STRVAL_P(key), Z_STRLEN_P(key) + 1, &value, sizeof(zval *), NULL);
+          zend_symtable_update(return_value->value.ht, Z_STRVAL_P(key), Z_STRLEN_P(key) + 1, &value, sizeof(zval *), NULL);
         }
         zval_ptr_dtor(&key);
       }
@@ -589,7 +589,7 @@ void binary_deserialize(int8_t thrift_typeID, PHPInputTransport& transport, zval
         }
         else {
           if (Z_TYPE_P(key) != IS_STRING) convert_to_string(key);
-          zend_hash_update(return_value->value.ht, Z_STRVAL_P(key), Z_STRLEN_P(key) + 1, &value, sizeof(zval *), NULL);
+          zend_symtable_update(return_value->value.ht, Z_STRVAL_P(key), Z_STRLEN_P(key) + 1, &value, sizeof(zval *), NULL);
         }
         zval_ptr_dtor(&key);
       }
@@ -728,6 +728,42 @@ inline bool ttypes_are_compatible(int8_t t1, int8_t t2) {
   return ((t1 == t2) || (ttype_is_int(t1) && ttype_is_int(t2)));
 }
 
+//is used to validate objects before serialization and after deserialization. For now, only required fields are validated.
+static
+void validate_thrift_object(zval* object) {
+
+  HashPosition key_ptr;
+  zval** val_ptr;
+
+  TSRMLS_FETCH();
+  zend_class_entry* object_class_entry = zend_get_class_entry(object TSRMLS_CC);
+  HashTable* spec = Z_ARRVAL_P(zend_read_static_property(object_class_entry, "_TSPEC", 6, false TSRMLS_CC));
+
+  for (zend_hash_internal_pointer_reset_ex(spec, &key_ptr); zend_hash_get_current_data_ex(spec, (void**)&val_ptr, &key_ptr) == SUCCESS; zend_hash_move_forward_ex(spec, &key_ptr)) {
+    ulong fieldno;
+    if (zend_hash_get_current_key_ex(spec, NULL, NULL, &fieldno, 0, &key_ptr) != HASH_KEY_IS_LONG) {
+      throw_tprotocolexception("Bad keytype in TSPEC (expected 'long')", INVALID_DATA);
+      return;
+    }
+    HashTable* fieldspec = Z_ARRVAL_PP(val_ptr);
+
+    // field name
+    zend_hash_find(fieldspec, "var", 4, (void**)&val_ptr);
+    char* varname = Z_STRVAL_PP(val_ptr);
+
+    zend_hash_find(fieldspec, "isRequired", 11, (void**)&val_ptr);
+    bool is_required = Z_BVAL_PP(val_ptr);
+
+    zval* prop = zend_read_property(object_class_entry, object, varname, strlen(varname), false TSRMLS_CC);
+
+    if (is_required && Z_TYPE_P(prop) == IS_NULL) {
+        char errbuf[128];
+        snprintf(errbuf, 128, "Required field %s.%s is unset!", object_class_entry->name, varname);
+        throw_tprotocolexception(errbuf, INVALID_DATA);
+    }
+  }
+}
+
 void binary_deserialize_spec(zval* zthis, PHPInputTransport& transport, HashTable* spec) {
   // SET and LIST have 'elem' => array('type', [optional] 'class')
   // MAP has 'val' => array('type', [optiona] 'class')
@@ -737,7 +773,10 @@ void binary_deserialize_spec(zval* zthis, PHPInputTransport& transport, HashTabl
     zval** val_ptr = NULL;
 
     int8_t ttype = transport.readI8();
-    if (ttype == T_STOP) return;
+    if (ttype == T_STOP) {
+      validate_thrift_object(zthis);
+      return;
+    }
     int16_t fieldno = transport.readI16();
     if (zend_hash_index_find(spec, fieldno, (void**)&val_ptr) == SUCCESS) {
       HashTable* fieldspec = Z_ARRVAL_PP(val_ptr);
@@ -903,6 +942,9 @@ void binary_serialize(int8_t thrift_typeID, PHPOutputTransport& transport, zval*
 
 
 void binary_serialize_spec(zval* zthis, PHPOutputTransport& transport, HashTable* spec) {
+
+  validate_thrift_object(zthis);
+
   HashPosition key_ptr;
   zval** val_ptr;
 
@@ -1020,7 +1062,7 @@ PHP_FUNCTION(thrift_protocol_read_binary) {
   if (argc == 4 && Z_TYPE_PP(args[3]) != IS_LONG) {
     php_error_docref(NULL TSRMLS_CC, E_ERROR, "4nd parameter is not an integer (typename of expected buffer size)");
     efree(args);
-    RETURN_NULL;
+    RETURN_NULL();
   }
 
   try {

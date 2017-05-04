@@ -57,7 +57,7 @@ class TBinarySerializer
     return $transport->getBuffer();
   }
 
-  public static function deserialize($string_object, $class_name, $buffer_size = 8192)
+  public static function deserialize($string_object, $class_name, $buffer_size  = 8192)
   {
      $transport = new TMemoryBuffer();
      $protocol = new TBinaryProtocolAccelerated($transport);

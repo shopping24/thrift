@@ -18,7 +18,8 @@
 #
 AUTOMAKE_OPTIONS = subdir-objects serial-tests
 
-BUILT_SOURCES = gen-cpp/DebugProtoTest_types.h \
+BUILT_SOURCES = gen-cpp/AnnotationTest_types.h \
+                gen-cpp/DebugProtoTest_types.h \
                 gen-cpp/EnumTest_types.h \
                 gen-cpp/OptionalRequiredTest_types.h \
                 gen-cpp/Recursive_types.h \
@@ -31,6 +32,8 @@ BUILT_SOURCES = gen-cpp/DebugProtoTest_types.h \
 
 noinst_LTLIBRARIES = libtestgencpp.la libprocessortest.la
 nodist_libtestgencpp_la_SOURCES = \
+	gen-cpp/AnnotationTest_types.cpp \
+	gen-cpp/AnnotationTest_types.h \
 	gen-cpp/DebugProtoTest_types.cpp \
 	gen-cpp/DebugProtoTest_types.h \
 	gen-cpp/EnumTest_types.cpp \
@@ -89,7 +92,8 @@ check_PROGRAMS = \
 	TFileTransportTest \
 	link_test \
 	OpenSSLManualInitTest \
-	EnumTest
+	EnumTest \
+        AnnotationTest
 
 if AMX_HAVE_LIBEVENT
 noinst_PROGRAMS += \
@@ -119,7 +123,8 @@ UnitTests_SOURCES = \
 
 if !WITH_BOOSTTHREADS
 UnitTests_SOURCES += \
-    RWMutexStarveTest.cpp
+  concurrency/MutexTest.cpp \
+  concurrency/RWMutexStarveTest.cpp
 endif
 
 UnitTests_LDADD = \
@@ -178,9 +183,16 @@ ZlibTest_LDADD = \
   -lz
 
 EnumTest_SOURCES = \
-  EnumTest.cpp
+	EnumTest.cpp
 
 EnumTest_LDADD = \
+  libtestgencpp.la \
+  $(BOOST_TEST_LDADD)
+
+AnnotationTest_SOURCES = \
+	AnnotationTest.cpp
+
+AnnotationTest_LDADD = \
   libtestgencpp.la \
   $(BOOST_TEST_LDADD)
 
@@ -334,6 +346,9 @@ OpenSSLManualInitTest_LDADD = \
 #
 THRIFT = $(top_builddir)/compiler/cpp/thrift
 
+gen-cpp/AnnotationTest_constants.cpp gen-cpp/AnnotationTest_constants.h gen-cpp/AnnotationTest_types.cpp gen-cpp/AnnotationTest_types.h: $(top_srcdir)/test/AnnotationTest.thrift
+	$(THRIFT) --gen cpp $<
+
 gen-cpp/DebugProtoTest_types.cpp gen-cpp/DebugProtoTest_types.h gen-cpp/EmptyService.cpp gen-cpp/EmptyService.h: $(top_srcdir)/test/DebugProtoTest.thrift
 	$(THRIFT) --gen cpp $<
 
@@ -358,7 +373,7 @@ gen-cpp/SecondService.cpp gen-cpp/ThriftTest_constants.cpp gen-cpp/ThriftTest.cp
 gen-cpp/ChildService.cpp gen-cpp/ChildService.h gen-cpp/ParentService.cpp gen-cpp/ParentService.h gen-cpp/proc_types.cpp gen-cpp/proc_types.h: processor/proc.thrift
 	$(THRIFT) --gen cpp:templates,cob_style $<
 
-AM_CPPFLAGS = $(BOOST_CPPFLAGS) -I$(top_srcdir)/lib/cpp/src -D__STDC_LIMIT_MACROS
+AM_CPPFLAGS = $(BOOST_CPPFLAGS) -I$(top_srcdir)/lib/cpp/src -D__STDC_LIMIT_MACROS -I.
 AM_LDFLAGS = $(BOOST_LDFLAGS)
 AM_CXXFLAGS = -Wall -Wextra -pedantic
 

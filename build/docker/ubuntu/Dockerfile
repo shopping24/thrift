@@ -10,10 +10,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Apache Thrift Docker build environment for Centos
+# Apache Thrift Docker build environment for Ubuntu
 #
 # Known missing client libraries:
-#  - None
+#  - dotnetcore
+#  - rust
 
 FROM buildpack-deps:trusty-scm
 MAINTAINER Apache Thrift <dev@thrift.apache.org>
@@ -21,9 +22,15 @@ MAINTAINER Apache Thrift <dev@thrift.apache.org>
 ENV DEBIAN_FRONTEND noninteractive
 
 # Add apt sources
+# CMAKE
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends software-properties-common && \
+    add-apt-repository -y ppa:george-edison55/cmake-3.x
+
 # Erlang
 RUN echo 'deb http://packages.erlang-solutions.com/debian trusty contrib' > /etc/apt/sources.list.d/erlang_solutions.list && \
     curl -sSL https://packages.erlang-solutions.com/debian/erlang_solutions.asc | apt-key add -
+
 # Dart
 RUN curl https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && \
     curl https://storage.googleapis.com/download.dartlang.org/linux/debian/dart_stable.list > /etc/apt/sources.list.d/dart_stable.list && \
@@ -51,7 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 `#      libtool` \
 `#      make`
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get install -y --no-install-recommends \
 `# C++ dependencies` \
 `# libevent and OpenSSL are needed by D too` \
       libboost-dev \
@@ -66,14 +73,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       qtbase5-dev \
       qtbase5-dev-tools
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get install -y --no-install-recommends \
 `# Java dependencies` \
       ant \
       ant-optional \
       openjdk-7-jdk \
       maven
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get install -y --no-install-recommends \
 `# Python dependencies` \
 `# TODO:` \
 `# Install twisted and zope.interface via pip. we need twisted at ./configure time, otherwise` \
@@ -91,10 +98,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-setuptools \
       python3-pip
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get install -y --no-install-recommends \
 `# Ruby dependencies` \
       ruby \
       ruby-dev \
+      ruby-bundler \
 `# Perl dependencies` \
       libbit-vector-perl \
       libclass-accessor-class-perl \
@@ -102,7 +110,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libio-socket-ssl-perl \
       libnet-ssleay-perl
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get install -y --no-install-recommends \
 `# Php dependencies` \
       php5 \
       php5-dev \
@@ -121,7 +129,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       erlang-tools \
       rebar
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get install -y --no-install-recommends \
 `# Haskell dependencies` \
       ghc \
       cabal-install \
@@ -130,18 +138,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       neko-dev \
       libneko0
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get install -y --no-install-recommends \
 `# Node.js dependencies` \
       nodejs \
       nodejs-dev \
       nodejs-legacy
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get install -y --no-install-recommends \
 `# CSharp dependencies` \
       libmono-system-web2.0-cil \
       mono-devel
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get install -y --no-install-recommends \
 `# D dependencies` \
       xdg-utils \
 `# Dart dependencies` \
@@ -173,7 +181,7 @@ ENV PATH /usr/local/go/bin:$PATH
 
 # Haxe
 RUN mkdir -p /usr/lib/haxe && \
-    curl http://haxe.org/website-content/downloads/3.2.0/downloads/haxe-3.2.0-linux64.tar.gz | \
+    wget -O - https://github.com/HaxeFoundation/haxe/releases/download/3.2.1/haxe-3.2.1-linux64.tar.gz | \
     tar -C /usr/lib/haxe --strip-components=1 -xz && \
     ln -s /usr/lib/haxe/haxe /usr/bin/haxe && \
     ln -s /usr/lib/haxe/haxelib /usr/bin/haxelib && \
@@ -201,6 +209,16 @@ RUN curl -sSL http://downloads.dlang.org/releases/2.x/2.070.0/dmd_2.070.0-0_amd6
 
 # Dart
 ENV PATH /usr/lib/dart/bin:$PATH
+
+# OCaml
+RUN echo 'deb http://ppa.launchpad.net/avsm/ppa/ubuntu trusty main' > /etc/apt/sources.list.d/avsm-official-ocaml.list && \
+    gpg --keyserver keyserver.ubuntu.com --recv 61707B09 && \
+    gpg --export --armor 61707B09 | apt-key add - && \
+    apt-get update && \
+    apt-get install -y ocaml opam && \
+    opam init && \
+    opam install oasis
+
 
 ENV THRIFT_ROOT /thrift
 RUN mkdir -p $THRIFT_ROOT/src
