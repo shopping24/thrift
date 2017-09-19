@@ -1,5 +1,17 @@
 Thrift Java Software Library
 
+How to build the Shopping24 patched Java version
+================================================
+
+Change the version number in `lib/java/build.properties`.
+
+In the directory `lib/java`, simply run `ant`. Then deploy the generated artifact manually to the `s24-release-local` repository in our artifactory.
+
+If the build fails because of missing dependencies that cannot be downloaded, try downloading them manually into your local maven repository with maven, e.g.:
+
+    mvn dependency:get -Dartifact=junit:junit:4.4
+
+
 License
 =======
 
